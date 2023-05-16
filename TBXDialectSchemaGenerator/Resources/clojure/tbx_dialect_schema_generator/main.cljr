@@ -1,0 +1,263 @@
+#_{:clj-kondo/ignore [:unresolved-symbol]}
+(assembly-load-with-partial-name "System")
+#_{:clj-kondo/ignore [:unresolved-symbol]}
+(assembly-load-with-partial-name "System.IO")
+#_{:clj-kondo/ignore [:unresolved-symbol]}
+(assembly-load-with-partial-name "System.Xml.Linq")
+
+
+(ns tbx-dialect-schema-generator.main
+  (:require [clojure.string])
+  (:import [System Exception]
+           [System.IO File FileNotFoundException]
+           [System.Xml.Linq XAttribute XComment XDeclaration XDocument XElement XName XNamespace])
+  (:gen-class
+   :name tbx-dialect-schema-generator.main
+   :main true))
+
+(defmacro xname+
+  ([name]
+   `(xname+ ~name nil))
+  ([name ns]
+   (if ns
+     `(XName/Get (str "{" ~ns "}" ~name))
+     `(XName/Get ~name))))
+
+(defmacro xelement
+  ([name ns & contents]
+   `(XElement. (xname+ ~name ~ns) (flatten [~@contents]))))
+
+(defmacro xattribute
+  ([name value]
+   `(XAttribute. (xname+ ~name) ~value))
+  ([name ns value]
+   `(XAttribute. (xname+ ~name ~ns) ~value)))
+
+(defonce sch-ns "http://purl.oclc.org/dsdl/schematron")
+
+
+(def tbx-ns
+  (xelement "ns" sch-ns
+            (xattribute "uri" "urn:iso:std:iso:30042:ed-2")
+            (xattribute "prefix" "tbx")))
+
+(def core-enforcement
+  (xelement "pattern" sch-ns
+            (xattribute "id" "coreEnforcement")
+            (xelement "rule" sch-ns
+                      (xattribute "context" "tbx:termNote")
+                      (xelement "assert" sch-ns
+                                (xattribute "test"
+                                            "parent::tbx:termSec or parent::tbx:termNoteGrp/parent::tbx:termSec")
+                                "Any termNote is only allowed at the termSec level."))
+            (xelement "rule" sch-ns
+                      (xattribute "context" "tbx:*[@type]")
+                      (xelement "assert" sch-ns
+                                (xattribute "test"
+                                            "@type != ''")
+                                "Data category must be declared.  If no permitted data categories are listed in the grammar schema, blank values are also not allowed."))
+            (xelement "rule" sch-ns
+                      (xattribute "context" "*[@target]")
+                      (xelement "assert" sch-ns
+                                (xattribute "test"
+                                            "matches(@target,'https?://.+') or @target = //*/@id")
+                                "ID must be IDREF for internal references or URI following HTTP protocol for external references."))))
+
+(def xliff-inline-constraints
+  (xelement "pattern" sch-ns
+            (xattribute "id" "XLIFF.inlineConstraints")
+            (xelement "rule" sch-ns
+                      (xattribute "context"
+                                  "tbx:sc[following-sibling::tbx:ec]")
+                      (xelement "assert" sch-ns
+                                (xattribute "test"
+                                            "@isolated='no' or not(@isolated)")
+                                "@isolated must be 'no' if <sc/> or <ec/> has its corresponding <sc/>/<ec/> in the same note text and @startRef must be used for <ec>"))
+            (xelement "rule" sch-ns
+                      (xattribute "context"
+                                  "tbx:ec[preceding-sibling::tbx:sc]")
+                      (xelement "assert" sch-ns
+                                (xattribute "test"
+                                            "@isolated='no' or not(@isolated)")
+                                "@isolated must be 'no' if <sc/> or <ec/> has its corresponding <sc/>/<ec/> in the same note text and @startRef must be used for <ec>")
+                      (xelement "assert" sch-ns
+                                (xattribute "test"
+                                            "@startRef")
+                                "@starRef is required for <ec> if it is in the same note text as its corresponding <sc>")
+                      (XComment. (str (xelement "assert" nil
+                                                (xattribute "test"
+                                                            "not(@dir)")
+                                                "@dir only permitted when @isolated is 'yes'.")))
+                      (XComment. "@dir IS NOT CURRENTLY USED IN TBX"))
+            (xelement "rule" sch-ns
+                      (xattribute "context"
+                                  "tbx:sc[not(following-sibling::tbx:ec)]")
+                      (xelement "assert" sch-ns
+                                (xattribute "test"
+                                            "@isolated='yes' or not(@isolated)")
+                                "@isolated must be 'yes' if <sc/> or <ec/> does not have its corresponding <sc/>/<sc/> in the same note text."))
+            (xelement "rule" sch-ns
+                      (xattribute "context"
+                                  "tbx:ec[not(preceding-sibling::tbx:sc)]")
+                      (xelement "assert" sch-ns
+                                (xattribute "test"
+                                            "@isolated='yes' or not(@isolated)")
+                                "@isolated must be 'yes' if <sc/> or <ec/> does not have its corresponding <sc/>/<sc/> in the same note text.")
+                      (xelement "assert" sch-ns
+                                (xattribute "test"
+                                            "@id")
+                                "@id is REQUIRED when @isolated is or should be 'yes'."))
+            (xelement "rule" sch-ns
+                      (xattribute "context"
+                                  "tbx:ec[@isolated='yes']")
+                      (xelement "assert" sch-ns
+                                (xattribute "test"
+                                            "@id != ''")
+                                "ID is required if @isolated is 'yes'."))))
+
+(defn dialect-enforcement [dialect module-data]
+  (let [module-map (->> module-data
+                    vals
+                    flatten
+                    (group-by :classification-element))
+        pattern (xelement "pattern" sch-ns
+                         (xattribute "id" "dialectEnforcement")
+                         (xelement "rule" sch-ns
+                                   (xattribute "context" "tbx:tbx")
+                                   (xelement "assert" sch-ns
+                                             (xattribute "test" (str "attribute::type='" dialect "'"))
+                                             (str "The name of this dialect should be " dialect "."))
+                                   (xelement "assert" sch-ns
+                                             (xattribute "test" "attribute::style='dca'")
+                                             "The style of this dialect should be declared as 'dca'."))
+                         (xelement "rule" sch-ns
+                                   (xattribute "context" "*[not(namespace-uri() = 'urn:iso:std:iso:30042:ed-2')]")
+                                   (xelement "assert" sch-ns
+                                             (xattribute "test" "false()")
+                                             "DCT style elements are not permitted in DCA style TBX."))
+                         (XComment. " Data Category Types "))]
+    (doseq [[classification-elt dc-info] (sort-by first module-map)
+            :let [datcats (map :datcat dc-info)
+                  test (->> (map #(str ".='" % "'") datcats)
+                            (clojure.string/join " or "))]]
+      (doto pattern
+        (.Add (xelement "rule" sch-ns
+                        (xattribute "context"
+                                    (str "tbx:" classification-elt "/@type"))
+                        (xelement "assert" sch-ns
+                                  (xattribute "test" test)
+                                  (str "Permitted type value(s): "(clojure.string/join ", " datcats)))))))
+    pattern
+    ))
+
+(defn module-enforcement [module-data]
+  (flatten
+   (for [[module-name module-content] (seq module-data)]
+     (list (XComment. (str " " module-name " module rules "))
+           (sort-by #(some-> % (.Attribute (xname+ "id")) .Value)
+                    (for [[classification-elt module-infos] (group-by :classification-element module-content)]
+                      (xelement "pattern" sch-ns
+                                (xattribute "id" (str "module." module-name "." classification-elt))
+                                (for [module-info module-infos]
+                                  (list
+                                   (when (not-empty (:levels module-info))
+                                     (xelement "rule" sch-ns
+                                               (xattribute "context"
+                                                           (str "tbx:" classification-elt "[@type='" (:datcat module-info) "']"))
+                                               (xelement "assert" sch-ns
+                                                         (xattribute "test"
+                                                                     (cond
+                                                                       (= classification-elt "ref")
+                                                                       (clojure.string/join
+                                                                        " or "
+                                                                        (for [l (:levels module-info)]
+                                                                          (str "parent::tbx:" l " or " "parent::tbx:*[contains(./local-name(),'Grp')]/parent::tbx:" l)))
+
+                                                                       (= classification-elt "admin")
+                                                                       (clojure.string/join
+                                                                        " or "
+                                                                        (for [l (:levels module-info)]
+                                                                          (str "parent::tbx:" l " or " "parent::tbx:*[contains(./local-name(),'Grp')][not(./local-name() = 'transacGrp')]/parent::tbx:" l)))
+
+                                                                       (= classification-elt "transacNote")
+                                                                       (clojure.string/join
+                                                                        " or "
+                                                                        (for [l (:levels module-info)]
+                                                                          (str "parent::tbx:" l " or " "parent::tbx:transacGrp/parent::tbx:" l)))
+
+                                                                       (some #{classification-elt} #{"descrip" "transac" "termNote"})
+                                                                       (clojure.string/join
+                                                                        " or "
+                                                                        (for [l (:levels module-info)]
+                                                                          (str "parent::tbx:" l " or " "parent::tbx:" classification-elt "Grp/parent::tbx:" l)))
+
+                                                                       :default (clojure.string/join " or " (map #(str "parent::tbx:" %) (:levels module-info)))))
+
+                                                         (str "/" (:datcat module-info) "/ may only appear at level(s): " (clojure.string/join ", " (:levels module-info))))))
+                                   (when (= "picklist" (:datatype module-info))
+                                     (xelement "rule" sch-ns
+                                               (xattribute "context"
+                                                           (str "tbx:" classification-elt "[@type='" (:datcat module-info) "']"))
+                                               (xelement "assert" sch-ns
+                                                         (xattribute "test"
+                                                                     (clojure.string/join " or " (map #(str ".='" % "'") (:picklist module-info))))
+                                                         (str "/" (:datcat module-info) "/ type may be: " (clojure.string/join " or " (map #(str "'" % "'") (:picklist module-info))))))))))))))))
+
+(defn build-schema [dialect module-data]
+  (let [schema (XDocument. (XDeclaration. "1.0" "utf-8" nil)
+                           (to-array [(xelement "schema" sch-ns
+                                                (xattribute "queryBinding" "xslt2")
+                                                (xattribute "sqf" XNamespace/Xmlns "http://www.schematron-quickfix.com/validator/process")
+                                                tbx-ns
+                                                core-enforcement
+                                                xliff-inline-constraints
+                                                (dialect-enforcement dialect module-data)
+                                                (module-enforcement module-data)
+                                                )]))]
+    schema
+    ))
+
+(defn build-module-data [tbxmds]
+  (->> tbxmds
+       (map (fn[path]
+              (some-> path
+                      (XDocument/Load)
+                      .Root
+                      (some->>
+                        ((fn handle-root [root]
+                           {(-> root (.Attribute (XName/Get "module")) .Value)
+                            (some-> root
+                                    (.Elements (xname+ "datCatSet"))
+                                    first
+                                    (.Elements)
+                                    (->>
+                                     (map (fn handle-spec [spec]
+                                            {:classification-element (clojure.string/replace (-> spec .Name .LocalName) #"Spec$" "")
+                                             :datcat                 (-> spec (.Attribute (xname+ "name")) .Value)
+                                             :datatype               (-> spec
+                                                                         (.Element (xname+ "contents"))
+                                                                         (.Attribute (xname+ "datatype"))
+                                                                         .Value)
+                                             :picklist               (-> spec
+                                                                         (.Descendants (xname+ "value"))
+                                                                         (some->> (filter some?)
+                                                                                  (map #(.Value %)))
+                                                                         )
+                                             :levels                 (-> spec
+                                                                         (.Descendants (xname+ "level"))
+                                                                         (some->> (filter some?)
+                                                                                  (map #(.Value %)))
+                                                                         )}))))}))))))
+       (apply merge)))
+
+(defn -main [[output dialect & modules]]
+  (cond
+    (empty? dialect) (throw (Exception. "Dialect cannot be empty."))
+    (empty? output) (throw (Exception. "Output path cannot be empty."))
+    (some false? (map #(File/Exists %) modules)) (throw (FileNotFoundException. "Path to TBXMD files could not be found."))
+
+    :else
+    (let [module-data (build-module-data modules)]
+          (.Save (build-schema dialect module-data)
+                 output)
+      )))

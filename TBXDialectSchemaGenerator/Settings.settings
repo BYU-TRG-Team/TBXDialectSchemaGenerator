@@ -1,0 +1,15 @@
+﻿<?xml version='1.0' encoding='utf-8'?>
+<SettingsFile xmlns="http://schemas.microsoft.com/VisualStudio/2004/01/settings" CurrentProfile="(Default)" GeneratedClassNamespace="TBXDialectSchemaGenerator" GeneratedClassName="Settings">
+  <Profiles />
+  <Settings>
+    <Setting Name="BasicModuleRepo" Type="(Web Service URL)" Scope="User">
+      <Value Profile="(Default)">https://github.com/LTAC-Global/TBX_basic_module.git</Value>
+    </Setting>
+    <Setting Name="MinModuleRepo" Type="(Web Service URL)" Scope="User">
+      <Value Profile="(Default)">https://github.com/LTAC-Global/TBX_min_module.git</Value>
+    </Setting>
+    <Setting Name="ValidationAPI" Type="System.String" Scope="User">
+      <Value Profile="(Default)">https://validate.tbxinfo.net/</Value>
+    </Setting>
+  </Settings>
+</SettingsFile>
