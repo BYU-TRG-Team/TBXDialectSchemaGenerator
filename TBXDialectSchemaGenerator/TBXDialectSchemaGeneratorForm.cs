@@ -1,5 +1,3 @@
-using clojure.clr.api;
-using clojure.lang;
 using System.CodeDom.Compiler;
 using System.Collections;
 using System.Diagnostics.Tracing;
@@ -84,18 +82,6 @@ namespace TBXDialectSchemaGenerator
         }
 
         private bool _canBegin = false;
-        private IFn? ClojureLoad
-        {
-            get
-            {
-                try
-                {
-                    return Clojure.var("clojure.core", "load-string");
-                }
-                catch (Exception ex) { throw ex; }
-            }
-        }
-        private IFn? GeneratorMain { get; set; }
         private delegate bool IsValidDelegate();
         private List<IsValidDelegate> ValidationFunctions { get; }
 
@@ -107,24 +93,6 @@ namespace TBXDialectSchemaGenerator
         public TBXDialectSchemaGeneratorForm()
         {
             InitializeComponent();
-
-            Task.Run(() =>
-            {
-                //string tbxDialectSchemaGenDir = Path.Join("clojure", "tbx_dialect_schema_generator");
-                //string mainCljrTemp = Path.Join(
-                //    tbxDialectSchemaGenDir,
-                //    "main"
-                //);
-                //if (!Directory.Exists(tbxDialectSchemaGenDir)) Directory.CreateDirectory(tbxDialectSchemaGenDir);
-                //File.WriteAllBytes($"{mainCljrTemp}.cljr", ClojureSrc.main);
-
-                //ClojureLoad?.invoke($"/{mainCljrTemp}");
-                ClojureLoad?.invoke(ClojureSrc.main);
-                GeneratorMain = Clojure.var("tbx-dialect-schema-generator.main", "-main");
-
-                _canBegin = true;
-                Invoke(ValidateForm);
-            });
 
             toolStripProgressBar.Style = ProgressBarStyle.Marquee;
             toolStripStatusLabel.Text = "Loading dependencies...";
@@ -141,7 +109,6 @@ namespace TBXDialectSchemaGenerator
             {
                 ValidateDialectName,
                 ValidateModuleSelection,
-                () => _canBegin
             };
 
             ValidateForm();
@@ -322,12 +289,11 @@ namespace TBXDialectSchemaGenerator
                 Invoke((MethodInvoker)(() =>
                 {
                     List<TBXMDItem> checkedItems = new List<TBXMDItem>(checkedListBox.CheckedItems.OfType<TBXMDItem>());
-                    List<string> args = new List<string>() { "output.sch", dialectTextBox.Text };
-                    args.AddRange(checkedItems.Select(item => item.Resource ?? ""));
 
                     try
                     {
-                        var ret = GeneratorMain?.invoke(args);
+                        var ret = TBXDialectSchemaGenerator.Generate(dialectTextBox.Text, checkedItems.Select(item => item.Resource ?? "").ToArray());
+                        _ = File.WriteAllTextAsync("output.sch", ret);
                     } catch (Exception ex)
                     {
                         toolStripProgressBar.Style = ProgressBarStyle.Continuous;
