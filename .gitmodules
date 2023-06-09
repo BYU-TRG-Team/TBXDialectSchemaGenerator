@@ -1,7 +1,3 @@
-[submodule "Resources/TBX_basic_module"]
-	path = Resources/TBX_basic_module
-	url = git@github.com:LTAC-Global/TBX_basic_module.git
-	branch = master
 [submodule "TBXDialectSchemaGenerator/Resources/TBX_basic_module"]
 	path = TBXDialectSchemaGenerator/Resources/TBX_basic_module
 	url = git@github.com:LTAC-Global/TBX_basic_module.git
